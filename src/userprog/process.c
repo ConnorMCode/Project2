@@ -83,7 +83,11 @@ static void start_process (void *file_name_)
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-int process_wait (tid_t child_tid UNUSED) { return -1; }
+int process_wait (tid_t child_tid UNUSED) {
+  while (true) {
+
+  }
+}
 
 /* Free the current process's resources. */
 void process_exit (void)
@@ -423,10 +427,13 @@ static bool setup_stack (void **esp)
   if (kpage != NULL)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
+      if (success){
+        *esp = (char *)PHYS_BASE - 12;
+        printf("Stack pointer initialized at %p\n", *esp);
+
+      }else{
         palloc_free_page (kpage);
+      }
     }
   return success;
 }
