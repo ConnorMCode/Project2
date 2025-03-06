@@ -226,7 +226,7 @@ struct Elf32_Phdr
 #define PF_W 2 /* Writable. */
 #define PF_R 4 /* Readable. */
 
-static bool setup_stack (void **esp, char * file_name);
+static bool setup_stack (void **esp, int argc, char *args[]);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -354,7 +354,7 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Set up stack. */
   printf("sending %s into setup_stack\n", fn_final);
-  if (!setup_stack (esp, fn_final))
+  if (!setup_stack (esp, argc, args))
     goto done;
 
   /* Start address. */
@@ -478,17 +478,10 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-static bool setup_stack (void **esp, char * file_name)
+static bool setup_stack (void **esp, int argc, char *args[])
 {
   uint8_t *kpage;
   bool success = false;
-
-  char *saveptr;
-  char *argument;
-  int argc = 0;
-  int i;
-  char *fn_copy = malloc(strlen(file_name)+1);
-  strlcpy (fn_copy, file_name, strlen(file_name)+1);
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL)
@@ -501,19 +494,20 @@ static bool setup_stack (void **esp, char * file_name)
       }
     }
     printf("Stack pointer initialized at %p\n", *esp);
-    
-    for (argument = strtok_r (fn_copy, " ", &saveptr), i = 0; argument != NULL; argument = strtok_r (NULL, " ", &saveptr)){
-      argc++;
+
+    uint32_t * arg_ptrs[argc];
+
+    for (int i = argc-1; i >= 0; i--){
+      *esp = (char *)*esp - sizeof(char)*(strlen(args[i]) + 1);
+      memcpy(*esp, args[i], sizeof(char)*(strlen(args[i]) + 1));
+      arg_ptrs[i] = *esp;
+      printf("Added arg %s at %p\n", args[i], *esp);
+      printf("*esp now points to %s at %p as shown by %p\n", (char **)*esp, *esp, arg_ptrs[i]);
     }
 
-    int *args = calloc(argc, sizeof(int));
+    printf("checkpoint: arg_ptrs[0] is %s and arg_ptrs[1] is %s\n", (char *)arg_ptrs[0], (char *)arg_ptrs[1]);
 
-    for (argument = strtok_r (file_name, " ", &saveptr), i = 0; argument != NULL; argument = strtok_r (NULL, " ", &saveptr), i++){
-      *esp = (char *)*esp - strlen(argument) + 1;
-      memcpy(*esp, argument, strlen(argument) + 1);
-      args[i] = *esp;
-      printf("Added arg at %p\n", *esp);
-    }
+    printf("args are now %s and %s\n", args[0], args[1]);
 
     // Align to 4 bytes
     while((int)*esp%4 != 0){
@@ -530,11 +524,13 @@ static bool setup_stack (void **esp, char * file_name)
     printf("null pointer at %p\n", *esp);
    
     // Add argument addresses
-    for (int i = argc -1; i >= 0; i--) {
+    for (int i = argc -1; i >= 0; i--) {      
+      //memcpy(*esp, &arg_ptrs[i], sizeof(char *));
       *esp = (char *)*esp - sizeof(char *);
-      memcpy(*esp, &args[i], sizeof(char *));
+      (*(uint32_t **)(*esp)) = arg_ptrs[i];
+      printf("Added %s from address %p at address at %p\n", *(char**)*esp, arg_ptrs[i], *esp);
     }
-    printf("Addresses at %p\n", *esp);
+    
 
     // Add args
     char **args_ptr = (char **)*esp;
@@ -552,8 +548,7 @@ static bool setup_stack (void **esp, char * file_name)
     memcpy(*esp, &null, sizeof(int));
     printf("add return at %p\n", *esp);
 
-    free(fn_copy);
-    free(args);
+    printf("at the end of setup_stack, args[0] is %s and args[1] is %s\n", args[0], args[1]);
     
     return success;
 }

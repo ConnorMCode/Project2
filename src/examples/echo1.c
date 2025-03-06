@@ -15,6 +15,8 @@ int main (int argc, char **argv)
   printf("found %d at argc\n", argc);
 
   printf("found %s at argv[0]\n", argv[0]);
+
+  printf("found %s at argv[1]\n", argv[1]);
   
   printf("got here, found %d at argc and %s at argv[0]\n", argc, argv[0]);
   
