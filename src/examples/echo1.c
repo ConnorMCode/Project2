@@ -1,28 +1,32 @@
-#include <stdio.h>
+ #include <stdio.h>
 #include <syscall.h>
 
-int main (int argc, char **argv)
+int main (void)
 {
+  int fd;
 
-  printf("hellooooo");
-  
-  int i;
+  fd = open("test.txt");
+  if (fd < 0){
+    printf("FAIL: Could not open test.txt\n");
+  } else {
+    printf("PASS: Opened test.txt with fd: %d\n", fd);
+  }
 
-  printf("Address of argc: %p\n", (void*)&argc);
+  if (fd > 1){
+    close(fd);
 
-  printf("Address of argv: %p\n", (void*)&argv);
+    printf("PASS: Closed test.txt\n");
 
-  printf("found %d at argc\n", argc);
+    close(fd);
+    printf("PASS: Tried closing again");
+  }
 
-  printf("found %s at argv[0]\n", argv[0]);
-
-  printf("found %s at argv[1]\n", argv[1]);
-  
-  printf("got here, found %d at argc and %s at argv[0]\n", argc, argv[0]);
-  
-  for (i = 0; i < argc; i++)
-    printf ("%s ", argv[i]);
-  printf ("\n");
+  fd = open("non-existent.txt");
+  if (fd < 0){
+    printf("PASS: Opening non existent file failed as expected");
+  } else {
+    printf("FAIL: Opened non_existent.txt, shouldn't happen");
+  }
 
   return EXIT_SUCCESS;
   
