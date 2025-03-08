@@ -177,6 +177,7 @@ tid_t thread_create (const char *name, int priority, thread_func *function,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+  list_push_back (&running_thread()->children, &t->child_list_elem);
   
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -265,6 +266,8 @@ void thread_exit (void)
 {
   ASSERT (!intr_context ());
 
+  sema_up(&thread_current()->child_sema);
+  
 #ifdef USERPROG
   process_exit ();
 #endif
@@ -431,6 +434,11 @@ static void init_thread (struct thread *t, const char *name, int priority)
 
   list_init(&t->files);
   t->free_fd = 2;
+
+  list_init(&t->children);
+  sema_init(&t->child_sema, 0);
+
+  t->exit_code = -1;
   
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

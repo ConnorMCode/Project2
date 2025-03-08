@@ -28,6 +28,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t process_execute (const char *file_name)
 {
   char *fn_copy;
+  char *fn_copy2;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -36,28 +37,19 @@ tid_t process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-
-  printf("Starting with file_name %s\n", file_name);
   
   char *saveptr;
-  char *argument = strtok_r(fn_copy, " ", &saveptr);
-  char *args[128];
-  int argc = 0;
-
-  while (argument != NULL) {
-    args[argc++] = argument;
-    argument = strtok_r(NULL, " ", &saveptr);
-  }
-
-  printf("%d arguments found\n", argc);
-
-  strlcpy(fn_copy, file_name, PGSIZE);
+  fn_copy2 = malloc(strlen(file_name)+1);
+  strlcpy(fn_copy2, file_name, strlen(file_name)+1);
+  fn_copy2 = strtok_r(fn_copy2, " ", &saveptr);
   
   /* Create a new thread to execute FILE_NAME. */
-  printf("sending %s into thread_create\n", fn_copy);
-  tid = thread_create (args[0], PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
+  tid = thread_create (fn_copy2, PRI_DEFAULT, start_process, fn_copy);
+
+  free(fn_copy2);
+  if (tid == TID_ERROR){
     palloc_free_page (fn_copy);
+  }
   return tid;
 }
 
@@ -70,7 +62,6 @@ static void start_process (void *file_name_)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-  printf("In start_process set fn_copy to %s\n", fn_copy);
   char *saveptr;
   char *argument = strtok_r(file_name, " ", &saveptr);
   char *args[128];
@@ -91,7 +82,6 @@ static void start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  printf("loading with filename: %s\n", fn_copy);
   success = load (fn_copy, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
@@ -119,9 +109,31 @@ static void start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int process_wait (tid_t child_tid UNUSED) {
-  while (true) {
+  
+  struct thread *parent_thread = thread_current();
+  struct thread *child_thread = NULL;
+  struct list_elem *child;
 
+  if(list_empty(&parent_thread->children)){
+    return -1;
   }
+
+  for(child = list_front(&parent_thread->children); child != NULL; child = child->next){
+    struct thread *temp = list_entry(child, struct thread, child_list_elem);
+    if (temp->tid == child_tid){
+      child_thread = temp;
+      if(child_thread == NULL){
+	return -1;
+      }
+      break;
+    }
+  }
+
+  list_remove(&child_thread->child_list_elem);
+
+  sema_down(&child_thread->child_sema);
+
+  return child_thread->exit_code;
 }
 
 /* Free the current process's resources. */
@@ -251,7 +263,7 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
   strlcpy (fn_final, file_name, PGSIZE);
 
   char *fn_copy = file_name;
-  printf("In load set fn_copy to %s\n", fn_copy);
+  
   char *saveptr;
   char *argument = strtok_r(fn_copy, " ", &saveptr);
   char *args[128];
@@ -264,9 +276,6 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
 
   char *exe_name = args[0];
 
-  printf("Load received name %s\n", exe_name);
-
-  printf("And args holds %s\n", args[0]);
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
@@ -278,7 +287,6 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
   file = filesys_open (exe_name);
   if (file == NULL)
     {
-      printf ("load: %s: open failed\n", exe_name);
       goto done;
     }
 
@@ -353,7 +361,6 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  printf("sending %s into setup_stack\n", fn_final);
   if (!setup_stack (esp, argc, args))
     goto done;
 
@@ -493,7 +500,6 @@ static bool setup_stack (void **esp, int argc, char *args[])
         palloc_free_page (kpage);
       }
     }
-    printf("Stack pointer initialized at %p\n", *esp);
 
     uint32_t * arg_ptrs[argc];
 
@@ -501,13 +507,7 @@ static bool setup_stack (void **esp, int argc, char *args[])
       *esp = (char *)*esp - sizeof(char)*(strlen(args[i]) + 1);
       memcpy(*esp, args[i], sizeof(char)*(strlen(args[i]) + 1));
       arg_ptrs[i] = *esp;
-      printf("Added arg %s at %p\n", args[i], *esp);
-      printf("*esp now points to %s at %p as shown by %p\n", (char **)*esp, *esp, arg_ptrs[i]);
     }
-
-    printf("checkpoint: arg_ptrs[0] is %s and arg_ptrs[1] is %s\n", (char *)arg_ptrs[0], (char *)arg_ptrs[1]);
-
-    printf("args are now %s and %s\n", args[0], args[1]);
 
     // Align to 4 bytes
     while((int)*esp%4 != 0){
@@ -515,20 +515,19 @@ static bool setup_stack (void **esp, int argc, char *args[])
       char x = 0;
       memcpy(*esp, &x, sizeof(char));
     }
-    printf("Aligning at %p\n", *esp);
+    
 
     // Add null pointer
     int null = 0;
     *esp = (char *)*esp - sizeof(int);
     memcpy(*esp, &null, sizeof(int));
-    printf("null pointer at %p\n", *esp);
+    
    
     // Add argument addresses
     for (int i = argc -1; i >= 0; i--) {      
       //memcpy(*esp, &arg_ptrs[i], sizeof(char *));
       *esp = (char *)*esp - sizeof(char *);
       (*(uint32_t **)(*esp)) = arg_ptrs[i];
-      printf("Added %s from address %p at address at %p\n", *(char**)*esp, arg_ptrs[i], *esp);
     }
     
 
@@ -536,19 +535,14 @@ static bool setup_stack (void **esp, int argc, char *args[])
     char **args_ptr = (char **)*esp;
     *esp = (char *)*esp - sizeof(char *);
     memcpy(*esp, &args_ptr, sizeof(char *));
-    printf("add args array at %p\n", *esp);
 	
     // Add argc
     *esp = (char *)*esp - sizeof(int);
     memcpy(*esp, &argc, sizeof(int));
-    printf("add argc at %p\n", *esp);
 	
     // Add empty return addr
     *esp = (char *)*esp - sizeof(int);
     memcpy(*esp, &null, sizeof(int));
-    printf("add return at %p\n", *esp);
-
-    printf("at the end of setup_stack, args[0] is %s and args[1] is %s\n", args[0], args[1]);
     
     return success;
 }
