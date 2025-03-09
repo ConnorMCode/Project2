@@ -177,7 +177,12 @@ tid_t thread_create (const char *name, int priority, thread_func *function,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-  list_push_back (&running_thread()->children, &t->child_list_elem);
+  struct child* kid = malloc(sizeof(*kid));
+  kid->tid = tid;
+  kid->exit_code = t->exit_code;
+  kid->sema_ptr = &t->child_sema;
+  t->my_child_struct = kid;
+  list_push_back (&running_thread()->children, &kid->child_list_elem);
   
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -271,7 +276,7 @@ void thread_exit (void)
 #ifdef USERPROG
   process_exit ();
 #endif
-
+  
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
@@ -436,6 +441,7 @@ static void init_thread (struct thread *t, const char *name, int priority)
   t->free_fd = 2;
 
   list_init(&t->children);
+  t->parent = running_thread();
   sema_init(&t->child_sema, 0);
 
   t->exit_code = -1;

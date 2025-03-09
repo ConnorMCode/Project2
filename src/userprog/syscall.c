@@ -13,6 +13,7 @@
 #include "threads/vaddr.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "process.h"
 
 static void syscall_handler (struct intr_frame *);
 
@@ -20,6 +21,7 @@ struct file_struct {
   struct list_elem file_elem;
   struct file *ptr;
   int fd;
+  const char *name;
 };
 
 struct lock file_lock;
@@ -58,7 +60,7 @@ void syscall_init (void)
 static void syscall_handler (struct intr_frame *f UNUSED)
 {
   pointer_validate((const void *)f->esp);
-
+  
   int *ptr = (int *)f->esp;
   
   int syscall_number = *ptr;
@@ -121,14 +123,14 @@ static void syscall_handler (struct intr_frame *f UNUSED)
     pointer_validate(*(ptr+1));
     f->eax = open((const char *)*(ptr+1));
     break;
-
+    
   case SYS_FILESIZE:
     pointer_validate(ptr+1);
     lock_acquire(&file_lock);
-    f->eax = file_length(find_file(*(ptr+1)));
+    f->eax = file_length(find_file(*(ptr+1))->ptr);
     lock_release(&file_lock);
     break;
-
+    
   case SYS_READ:
     pointer_validate(ptr+1);
     pointer_validate(ptr+2);
@@ -194,7 +196,11 @@ static void syscall_handler (struct intr_frame *f UNUSED)
 
 void exit(int status){
   thread_current()->exit_code = status;
+
+  thread_current()->my_child_struct->exit_code = status;
+
   printf("%s: exit(%d)\n", thread_current()->name, status);
+  
   thread_exit();
 }
 
@@ -235,7 +241,13 @@ int open(const char *file) {
     return(-1);
   }else{
     struct file_struct *fs = malloc(sizeof(struct file_struct));
+    if (fs == NULL) {
+      file_close(f);
+      lock_release(&file_lock);
+      return -1;
+    }
     fs->ptr = f;
+    fs->name = file;
     fs->fd = thread_current()->free_fd;
     thread_current()->free_fd++;
     list_push_back(&thread_current()->files, &fs->file_elem);
@@ -247,7 +259,7 @@ int open(const char *file) {
 
 int read(int fd, const void *buffer, unsigned size) {
   lock_acquire(&file_lock);
-
+  
   if (buffer == NULL) {
     lock_release(&file_lock);
     return -1;
@@ -266,8 +278,10 @@ int read(int fd, const void *buffer, unsigned size) {
     lock_release(&file_lock);
     return -1;
   }
+  
 
   int bytes_read = file_read(fs->ptr, (void *)buffer, size);
+  lock_release(&file_lock);
   return bytes_read;
 }
 
@@ -282,9 +296,16 @@ int write(int fd, const void *buffer, unsigned size) {
     return size;
   }
 
-  //only worried about writing to output
+  struct file_struct *fs = find_file(fd);
+  if (fs == NULL) {
+    lock_release(&file_lock);
+    return -1;
+  }
+
+  int bytes_written = file_write(fs->ptr, buffer, size);
+  
   lock_release(&file_lock);
-  return -1;
+  return bytes_written;
 }
 
 void close(int fd_){

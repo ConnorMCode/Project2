@@ -101,8 +101,9 @@ struct thread
 
   struct list children;
   int exit_code;
-  struct list_elem child_list_elem;
   struct semaphore child_sema;
+  struct thread *parent;
+  struct child *my_child_struct;
   
 #ifdef USERPROG
   /* Owned by userprog/process.c. */
@@ -112,6 +113,14 @@ struct thread
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
+};
+
+struct child
+{
+  struct list_elem child_list_elem;
+  int exit_code;
+  int tid;
+  struct semaphore *sema_ptr;
 };
 
 /* If false (default), use round-robin scheduler.

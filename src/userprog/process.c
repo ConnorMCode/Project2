@@ -111,29 +111,33 @@ static void start_process (void *file_name_)
 int process_wait (tid_t child_tid UNUSED) {
   
   struct thread *parent_thread = thread_current();
-  struct thread *child_thread = NULL;
+  struct child *child_struct = NULL;
   struct list_elem *child;
 
   if(list_empty(&parent_thread->children)){
     return -1;
   }
 
-  for(child = list_front(&parent_thread->children); child != NULL; child = child->next){
-    struct thread *temp = list_entry(child, struct thread, child_list_elem);
-    if (temp->tid == child_tid){
-      child_thread = temp;
-      if(child_thread == NULL){
-	return -1;
-      }
+  for(child = list_begin(&parent_thread->children); child != list_end(&parent_thread->children); child = list_next(child)){
+    child_struct = list_entry(child, struct child, child_list_elem);
+    if (child_struct->tid == child_tid){
       break;
     }
   }
 
-  list_remove(&child_thread->child_list_elem);
+  if(child_struct == NULL){
+    return -1;
+  }
 
-  sema_down(&child_thread->child_sema);
+  list_remove(&child_struct->child_list_elem);
 
-  return child_thread->exit_code;
+  sema_down(child_struct->sema_ptr);
+
+  int error_hold = child_struct->exit_code;
+
+  free(child_struct);
+  
+  return error_hold;
 }
 
 /* Free the current process's resources. */
@@ -141,7 +145,8 @@ void process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-
+  
+  
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
