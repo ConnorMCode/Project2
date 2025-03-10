@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -177,7 +178,7 @@ tid_t thread_create (const char *name, int priority, thread_func *function,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-  struct child* kid = malloc(sizeof(*kid));
+  struct child* kid = palloc_get_page(PAL_ZERO);
   kid->tid = tid;
   kid->exit_code = t->exit_code;
   kid->sema_ptr = &t->child_sema;

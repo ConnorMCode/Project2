@@ -9,6 +9,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/synch.h"
+#include "threads/palloc.h"
 #include "userprog/pagedir.h"
 #include "threads/vaddr.h"
 #include "filesys/file.h"
@@ -16,13 +17,6 @@
 #include "process.h"
 
 static void syscall_handler (struct intr_frame *);
-
-struct file_struct {
-  struct list_elem file_elem;
-  struct file *ptr;
-  int fd;
-  const char *name;
-};
 
 struct lock file_lock;
 
@@ -77,8 +71,8 @@ static void syscall_handler (struct intr_frame *f UNUSED)
 
   case SYS_EXEC:
     pointer_validate(ptr+1);
-    pointer_validate(*(ptr+1));
-    f->eax = exec_func(*(ptr+1));
+    pointer_validate((const void *)*(ptr+1));
+    f->eax = exec_func((char *)*(ptr+1));
     break;
 
   case SYS_WAIT:
@@ -89,7 +83,7 @@ static void syscall_handler (struct intr_frame *f UNUSED)
   case SYS_CREATE:
     pointer_validate(ptr+1);
     pointer_validate(ptr+2);
-    pointer_validate(*(ptr+1));
+    pointer_validate((const void *)*(ptr+1));
     lock_acquire(&file_lock);
 
     if((const char *)*(ptr+1) == NULL){
@@ -98,29 +92,29 @@ static void syscall_handler (struct intr_frame *f UNUSED)
       break;
     }
 
-    if((const char *)*(ptr+1) == '\0'){
+    if((const char *)*(ptr+1) == NULL){
       f->eax = 0;
       lock_release(&file_lock);
       exit(-1);
       break;
     }
     
-    f->eax = filesys_create(*(ptr+1), *(ptr+2));
+    f->eax = filesys_create((const char *)*(ptr+1), *(ptr+2));
     lock_release(&file_lock);
     break;
 
   case SYS_REMOVE:
     pointer_validate(ptr+1);
-    pointer_validate(*(ptr+1));
+    pointer_validate((const void *)*(ptr+1));
     lock_acquire(&file_lock);
-    bool remove_result = filesys_remove(*(ptr+1));
+    bool remove_result = filesys_remove((const char *)*(ptr+1));
     f->eax = remove_result;
     lock_release(&file_lock);
     break;
     
   case SYS_OPEN:
     pointer_validate(ptr+1);
-    pointer_validate(*(ptr+1));
+    pointer_validate((const void *)*(ptr+1));
     f->eax = open((const char *)*(ptr+1));
     break;
     
@@ -135,7 +129,7 @@ static void syscall_handler (struct intr_frame *f UNUSED)
     pointer_validate(ptr+1);
     pointer_validate(ptr+2);
     pointer_validate(ptr+3);
-    pointer_validate(*(ptr+2));
+    pointer_validate((const void *)*(ptr+2));
     f->eax = read(*(ptr+1), (void *)*(ptr+2), *(unsigned *)(ptr+3));
     break;
     
@@ -168,7 +162,7 @@ static void syscall_handler (struct intr_frame *f UNUSED)
     pointer_validate(ptr+1);
     int fd_tell = *(int *)(ptr+1);
     lock_acquire(&file_lock);
-    f->eax = file_tell(find_file(fd_tell));
+    f->eax = file_tell(find_file(fd_tell)->ptr);
     lock_release(&file_lock);
     break;
 
@@ -206,8 +200,8 @@ void exit(int status){
 
 int exec_func(char *file_name){
   lock_acquire(&file_lock);
-  char *fn_copy = malloc(strlen(file_name)+1);
-  strlcpy(fn_copy, file_name, strlen(file_name)+1);
+  char *fn_copy = palloc_get_page(0);
+  strlcpy(fn_copy, file_name, PGSIZE);
 
   char *saveptr;
   fn_copy = strtok_r(fn_copy, " ", &saveptr);
@@ -215,10 +209,12 @@ int exec_func(char *file_name){
   struct file *check_file = filesys_open(fn_copy);
 
   if(check_file == NULL){
+    palloc_free_page(fn_copy);
     lock_release(&file_lock);
     return -1;
   }else{
     file_close(check_file);
+    palloc_free_page(fn_copy);
     lock_release(&file_lock);
     return process_execute(file_name);
   }
@@ -240,7 +236,7 @@ int open(const char *file) {
     lock_release(&file_lock);
     return(-1);
   }else{
-    struct file_struct *fs = malloc(sizeof(struct file_struct));
+    struct file_struct *fs = palloc_get_page(PAL_ZERO);
     if (fs == NULL) {
       file_close(f);
       lock_release(&file_lock);
@@ -254,7 +250,6 @@ int open(const char *file) {
     lock_release(&file_lock);
     return fs->fd;
   }
-  
 }
 
 int read(int fd, const void *buffer, unsigned size) {
@@ -286,7 +281,7 @@ int read(int fd, const void *buffer, unsigned size) {
 }
 
 int write(int fd, const void *buffer, unsigned size) {
-
+  
   lock_acquire(&file_lock);
   pointer_validate(buffer);
 
@@ -302,6 +297,11 @@ int write(int fd, const void *buffer, unsigned size) {
     return -1;
   }
 
+  if(strcmp(thread_current()->name, fs->name) == 0){
+    lock_release(&file_lock);
+    return 0;
+  }
+  
   int bytes_written = file_write(fs->ptr, buffer, size);
   
   lock_release(&file_lock);
@@ -326,7 +326,7 @@ void close(int fd_){
     if (f->fd == fd_){
       file_close(f->ptr);
       list_remove(&f->file_elem);
-      free(f);
+      palloc_free_page(f);
       lock_release(&file_lock);
       return;
     }
@@ -336,7 +336,7 @@ void close(int fd_){
   return;
 }
 
-int symlink(char *target, char *linkpath){
+int symlink(const char *target, const char *linkpath){
   lock_acquire(&file_lock);
 
   if (target == NULL || linkpath == NULL){

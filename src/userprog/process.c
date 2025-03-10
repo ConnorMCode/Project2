@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -39,14 +40,18 @@ tid_t process_execute (const char *file_name)
   strlcpy (fn_copy, file_name, PGSIZE);
   
   char *saveptr;
-  fn_copy2 = malloc(strlen(file_name)+1);
+  fn_copy2 = palloc_get_page(0);
+  if (fn_copy2 == NULL){
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
   strlcpy(fn_copy2, file_name, strlen(file_name)+1);
   fn_copy2 = strtok_r(fn_copy2, " ", &saveptr);
   
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (fn_copy2, PRI_DEFAULT, start_process, fn_copy);
 
-  free(fn_copy2);
+  palloc_free_page(fn_copy2);
   if (tid == TID_ERROR){
     palloc_free_page (fn_copy);
   }
@@ -60,7 +65,7 @@ static void start_process (void *file_name_)
   char *file_name = file_name_;
   char *fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
-    return TID_ERROR;
+    thread_exit();
   strlcpy (fn_copy, file_name, PGSIZE);
   char *saveptr;
   char *argument = strtok_r(file_name, " ", &saveptr);
@@ -135,7 +140,7 @@ int process_wait (tid_t child_tid UNUSED) {
 
   int error_hold = child_struct->exit_code;
 
-  free(child_struct);
+  palloc_free_page(child_struct);
   
   return error_hold;
 }
@@ -145,7 +150,6 @@ void process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-  
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -263,11 +267,13 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
   int i;
 
   char *fn_final = palloc_get_page (0);
-  if (fn_final == NULL)
-    return TID_ERROR;
   strlcpy (fn_final, file_name, PGSIZE);
 
-  char *fn_copy = file_name;
+  char *fn_copy = palloc_get_page (0);
+  strlcpy (fn_copy, file_name, PGSIZE);
+
+  if (fn_final == NULL || fn_copy == NULL)
+    goto done;
   
   char *saveptr;
   char *argument = strtok_r(fn_copy, " ", &saveptr);
@@ -378,6 +384,7 @@ done:
   /* We arrive here whether the load is successful or not. */
   file_close (file);
   palloc_free_page(fn_final);
+  palloc_free_page(fn_copy);
   return success;
 }
 
