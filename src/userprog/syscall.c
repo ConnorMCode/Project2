@@ -317,7 +317,7 @@ int write(int fd, const void *buffer, unsigned size) {
   
   lock_acquire(&file_lock);
   pointer_validate(buffer);
-
+  
   if (fd == 1) {
     putbuf((char *)buffer, size);
     lock_release(&file_lock);
@@ -334,7 +334,7 @@ int write(int fd, const void *buffer, unsigned size) {
     lock_release(&file_lock);
     return 0;
   }
-
+  
   struct file_struct *sym_check = check_symlink(fs->name);
   if (sym_check != NULL){
     if(filesys_open(sym_check->target_path) == NULL){
@@ -344,7 +344,7 @@ int write(int fd, const void *buffer, unsigned size) {
       fs = find_file(sym_check->fd, &thread_current()->files);
     }
   }
-  
+
   int bytes_written = file_write(fs->ptr, buffer, size);
   
   lock_release(&file_lock);
@@ -436,17 +436,29 @@ int symlink(const char *target, const char *linkpath){
   }
 
   struct file_struct *fs = palloc_get_page(PAL_ZERO);
-  if (fs == NULL) {
+  if (fs == NULL){
     file_close(link_file);
     lock_release(&file_lock);
     return -1;
   }
   fs->ptr = link_file;
-  fs->target_path = target;
   fs->name = linkpath;
-  fs->fd = fd_hold;
-  list_push_back(&symlink_list, &fs->file_elem);
+  fs->fd = thread_current()->free_fd;
+  thread_current()->free_fd++;
+  list_push_back(&thread_current()->files, &fs->file_elem);
 
+  struct file_struct *symlink_struct = palloc_get_page(PAL_ZERO);
+  if (symlink_struct == NULL) {
+    file_close(link_file);
+    lock_release(&file_lock);
+    return -1;
+  }
+  symlink_struct->ptr = link_file;
+  symlink_struct->target_path = target;
+  symlink_struct->name = linkpath;
+  symlink_struct->fd = fd_hold;
+  list_push_back(&symlink_list, &symlink_struct->file_elem);
+  
   file_close(link_file);
   lock_release(&file_lock);
   return 0;

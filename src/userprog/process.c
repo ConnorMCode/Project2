@@ -267,13 +267,17 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
   int i;
 
   char *fn_final = palloc_get_page (0);
+  if (fn_final == NULL){
+    goto done;
+  }
   strlcpy (fn_final, file_name, PGSIZE);
 
   char *fn_copy = palloc_get_page (0);
-  strlcpy (fn_copy, file_name, PGSIZE);
-
-  if (fn_final == NULL || fn_copy == NULL)
+  if (fn_copy == NULL){
+    palloc_free_page(fn_final);
     goto done;
+  }
+  strlcpy (fn_copy, file_name, PGSIZE);
   
   char *saveptr;
   char *argument = strtok_r(fn_copy, " ", &saveptr);
@@ -380,11 +384,12 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
+  palloc_free_page(fn_final);
+  palloc_free_page(fn_copy);
+  
 done:
   /* We arrive here whether the load is successful or not. */
   file_close (file);
-  palloc_free_page(fn_final);
-  palloc_free_page(fn_copy);
   return success;
 }
 
