@@ -20,13 +20,25 @@ static void syscall_handler (struct intr_frame *);
 
 struct lock file_lock;
 
-struct file_struct *find_file(int fd){
-  struct list *files = &thread_current()->files;
+struct list symlink_list;
+
+struct file_struct *find_file(int fd, struct list *files){
   struct list_elem *e;
 
   for(e = list_begin(files); e != list_end(files); e = list_next(e)){
     struct file_struct *fs = list_entry(e, struct file_struct, file_elem);
     if (fs->fd == fd){
+      return fs;
+    }
+  }
+  return NULL;
+}
+
+struct file_struct *check_symlink(const char *path){
+  struct list_elem *e;
+  for (e = list_begin(&symlink_list); e != list_end(&symlink_list); e = list_next(e)){
+    struct file_struct *fs = list_entry(e, struct file_struct, file_elem);
+    if (strcmp(fs->name, path) == 0){
       return fs;
     }
   }
@@ -47,6 +59,7 @@ void pointer_validate(const void *ptr) {
 void syscall_init (void)
 {
   lock_init(&file_lock);
+  list_init(&symlink_list);
   
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
@@ -121,7 +134,7 @@ static void syscall_handler (struct intr_frame *f UNUSED)
   case SYS_FILESIZE:
     pointer_validate(ptr+1);
     lock_acquire(&file_lock);
-    f->eax = file_length(find_file(*(ptr+1))->ptr);
+    f->eax = file_length(find_file(*(ptr+1), &thread_current()->files)->ptr);
     lock_release(&file_lock);
     break;
     
@@ -148,7 +161,7 @@ static void syscall_handler (struct intr_frame *f UNUSED)
     unsigned position = *(unsigned *)(ptr+2);
 
     lock_acquire(&file_lock);
-    struct file_struct *fs = find_file(fd_seek);
+    struct file_struct *fs = find_file(fd_seek, &thread_current()->files);
     if (fs == NULL){
       lock_release(&file_lock);
       break;
@@ -162,7 +175,7 @@ static void syscall_handler (struct intr_frame *f UNUSED)
     pointer_validate(ptr+1);
     int fd_tell = *(int *)(ptr+1);
     lock_acquire(&file_lock);
-    f->eax = file_tell(find_file(fd_tell)->ptr);
+    f->eax = file_tell(find_file(fd_tell, &thread_current()->files)->ptr);
     lock_release(&file_lock);
     break;
 
@@ -230,8 +243,19 @@ int open(const char *file) {
     return(-1);
   }
 
-  struct file *f = filesys_open (file);
+  struct file_struct *sym_check = check_symlink(file);
+  if (sym_check != NULL){
+    if(filesys_open(sym_check->target_path) == NULL){
+      lock_release(&file_lock);
+      return -1;
+    }else{
+      lock_release(&file_lock);
+      return (open(sym_check->target_path));
+    }
+  }
 
+  struct file *f = filesys_open(file);
+  
   if(f == NULL){
     lock_release(&file_lock);
     return(-1);
@@ -268,12 +292,21 @@ int read(int fd, const void *buffer, unsigned size) {
     return size;
   }
 
-  struct file_struct *fs = find_file(fd);
+  struct file_struct *fs = find_file(fd, &thread_current()->files);
   if (fs == NULL){
     lock_release(&file_lock);
     return -1;
   }
-  
+
+  struct file_struct *sym_check = check_symlink(fs->name);
+  if (sym_check != NULL){
+    if(filesys_open(sym_check->target_path) == NULL){
+      lock_release(&file_lock);
+      return -1;
+    }else{
+      fs = find_file(sym_check->fd, &thread_current()->files);
+    }
+  }
 
   int bytes_read = file_read(fs->ptr, (void *)buffer, size);
   lock_release(&file_lock);
@@ -291,7 +324,7 @@ int write(int fd, const void *buffer, unsigned size) {
     return size;
   }
 
-  struct file_struct *fs = find_file(fd);
+  struct file_struct *fs = find_file(fd, &thread_current()->files);
   if (fs == NULL) {
     lock_release(&file_lock);
     return -1;
@@ -300,6 +333,16 @@ int write(int fd, const void *buffer, unsigned size) {
   if(strcmp(thread_current()->name, fs->name) == 0){
     lock_release(&file_lock);
     return 0;
+  }
+
+  struct file_struct *sym_check = check_symlink(fs->name);
+  if (sym_check != NULL){
+    if(filesys_open(sym_check->target_path) == NULL){
+      lock_release(&file_lock);
+      return -1;
+    }else{
+      fs = find_file(sym_check->fd, &thread_current()->files);
+    }
   }
   
   int bytes_written = file_write(fs->ptr, buffer, size);
@@ -339,6 +382,8 @@ void close(int fd_){
 int symlink(const char *target, const char *linkpath){
   lock_acquire(&file_lock);
 
+  int fd_hold;
+
   if (target == NULL || linkpath == NULL){
     lock_release(&file_lock);
     return -1;
@@ -349,6 +394,20 @@ int symlink(const char *target, const char *linkpath){
     lock_release(&file_lock);
     return -1;
   }
+
+  struct file_struct *target_hold = palloc_get_page(PAL_ZERO);
+  if (target_hold == NULL) {
+    file_close(target_file);
+    lock_release(&file_lock);
+    return -1;
+  }
+  target_hold->ptr = target_file;
+  target_hold->name = target;
+  target_hold->fd = thread_current()->free_fd;
+  fd_hold = target_hold->fd;
+  thread_current()->free_fd++;
+  list_push_back(&thread_current()->files, &target_hold->file_elem);
+  
   file_close(target_file);
 
   struct file *exists = filesys_open(linkpath);
@@ -375,6 +434,18 @@ int symlink(const char *target, const char *linkpath){
     lock_release(&file_lock);
     return -1;
   }
+
+  struct file_struct *fs = palloc_get_page(PAL_ZERO);
+  if (fs == NULL) {
+    file_close(link_file);
+    lock_release(&file_lock);
+    return -1;
+  }
+  fs->ptr = link_file;
+  fs->target_path = target;
+  fs->name = linkpath;
+  fs->fd = fd_hold;
+  list_push_back(&symlink_list, &fs->file_elem);
 
   file_close(link_file);
   lock_release(&file_lock);

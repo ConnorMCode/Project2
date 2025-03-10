@@ -12,9 +12,12 @@ struct file_struct {
   struct file *ptr;
   int fd;
   const char *name;
+  const char *target_path;
 };
 
-struct file_struct *find_file(int fd);
+struct file_struct *find_file(int fd, struct list *files);
+
+struct file_struct *check_symlink(const char *path);
 
 void pointer_validate(const void *ptr);
 
