@@ -38,7 +38,8 @@ tid_t process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-  
+
+  //Extract thread name
   char *saveptr;
   fn_copy2 = palloc_get_page(0);
   if (fn_copy2 == NULL){
@@ -72,6 +73,7 @@ static void start_process (void *file_name_)
   char *args[128];
   int argc = 0;
 
+  //Divide arguments into args[]
   while (argument != NULL) {
     args[argc++] = argument;
     argument = strtok_r(NULL, " ", &saveptr);
@@ -119,10 +121,12 @@ int process_wait (tid_t child_tid UNUSED) {
   struct child *child_struct = NULL;
   struct list_elem *child;
 
+  //return if no children found
   if(list_empty(&parent_thread->children)){
     return -1;
   }
 
+  //loop through children until child with child_tid is identified
   for(child = list_begin(&parent_thread->children); child != list_end(&parent_thread->children); child = list_next(child)){
     child_struct = list_entry(child, struct child, child_list_elem);
     if (child_struct->tid == child_tid){
@@ -134,10 +138,12 @@ int process_wait (tid_t child_tid UNUSED) {
     return -1;
   }
 
+  //remove child from list so it's not waited on twice
   list_remove(&child_struct->child_list_elem);
 
   sema_down(child_struct->sema_ptr);
 
+  //get error code before freeing
   int error_hold = child_struct->exit_code;
 
   palloc_free_page(child_struct);
@@ -284,6 +290,9 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
   char *args[128];
   int argc = 0;
 
+  /*divide arguments again, probably don't need to
+    be doing this multiple times but don't have time
+    to fix something that's working for now*/
   while (argument != NULL) {
     args[argc++] = argument;
     argument = strtok_r(NULL, " ", &saveptr);
@@ -520,6 +529,7 @@ static bool setup_stack (void **esp, int argc, char *args[])
 
     uint32_t * arg_ptrs[argc];
 
+    //add arguments to stack
     for (int i = argc-1; i >= 0; i--){
       *esp = (char *)*esp - sizeof(char)*(strlen(args[i]) + 1);
       memcpy(*esp, args[i], sizeof(char)*(strlen(args[i]) + 1));
