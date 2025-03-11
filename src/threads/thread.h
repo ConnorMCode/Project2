@@ -99,14 +99,14 @@ struct thread
   /* Shared between thread.c and synch.c. */
   struct list_elem elem; /* List element. */
 
-  struct list files;
-  int free_fd;
+  struct list files;        //List of files opened by this thread
+  int free_fd;              //Next available fd code for a file
 
-  struct list children;
-  int exit_code;
-  struct semaphore child_sema;
-  struct thread *parent;
-  struct child *my_child_struct;
+  struct list children;           //list of child threads
+  int exit_code;                  //exit code
+  struct semaphore child_sema;    //semaphore to for parent to wait on
+  struct thread *parent;          //pointer to parent thread
+  struct child *my_child_struct;  //child struct to store in parents children list
   
 #ifdef USERPROG
   /* Owned by userprog/process.c. */
