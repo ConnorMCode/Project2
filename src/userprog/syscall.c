@@ -215,7 +215,7 @@ int exec_func(char *file_name){
   lock_acquire(&file_lock);
   char *fn_copy = palloc_get_page(0);
   strlcpy(fn_copy, file_name, PGSIZE);
-
+  
   char *saveptr;
   fn_copy = strtok_r(fn_copy, " ", &saveptr);
 

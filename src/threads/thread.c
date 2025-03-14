@@ -444,6 +444,8 @@ static void init_thread (struct thread *t, const char *name, int priority)
   list_init(&t->children);
   t->parent = running_thread();
   sema_init(&t->child_sema, 0);
+  sema_init(&t->child_loaded, 0);
+  t->child_success = false;
 
   t->exit_code = -1;
   

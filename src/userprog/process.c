@@ -35,8 +35,9 @@ tid_t process_execute (const char *file_name)
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  if (fn_copy == NULL){
     return TID_ERROR;
+  }
   strlcpy (fn_copy, file_name, PGSIZE);
 
   //Extract thread name
@@ -53,9 +54,16 @@ tid_t process_execute (const char *file_name)
   tid = thread_create (fn_copy2, PRI_DEFAULT, start_process, fn_copy);
 
   palloc_free_page(fn_copy2);
-  if (tid == TID_ERROR){
-    palloc_free_page (fn_copy);
+  if(tid == TID_ERROR){
+    palloc_free_page(fn_copy);
   }
+  
+  sema_down(&thread_current()->child_loaded);
+
+  if(!thread_current()->child_success){
+    return -1;
+  }
+
   return tid;
 }
 
@@ -63,7 +71,7 @@ tid_t process_execute (const char *file_name)
    running. */
 static void start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  /*char *file_name = file_name_;
   char *fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     thread_exit();
@@ -79,7 +87,7 @@ static void start_process (void *file_name_)
     argument = strtok_r(NULL, " ", &saveptr);
   }
 
-  file_name = args[0];
+  file_name = args[0];*/
    
   struct intr_frame if_;
   bool success;
@@ -89,13 +97,18 @@ static void start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (fn_copy, &if_.eip, &if_.esp);
+  success = load (file_name_, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success)
+  //palloc_free_page (file_name);
+  if (!success){
+    thread_current()->parent->child_success = false;
+    sema_up(&thread_current()->parent->child_loaded);
     thread_exit ();
-
+  }else{
+    thread_current()->parent->child_success = true;
+    sema_up(&thread_current()->parent->child_loaded);
+  }
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -272,15 +285,17 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
   bool success = false;
   int i;
 
+  /*
   char *fn_final = palloc_get_page (0);
   if (fn_final == NULL){
+    printf("fn_final fail\n");
     goto done;
   }
   strlcpy (fn_final, file_name, PGSIZE);
-
+  */
   char *fn_copy = palloc_get_page (0);
   if (fn_copy == NULL){
-    palloc_free_page(fn_final);
+    //palloc_free_page(fn_final);
     goto done;
   }
   strlcpy (fn_copy, file_name, PGSIZE);
@@ -303,8 +318,9 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
-  if (t->pagedir == NULL)
+  if (t->pagedir == NULL){
     goto done;
+  }
   process_activate ();
 
   /* Open executable file. */
@@ -393,7 +409,7 @@ bool load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
-  palloc_free_page(fn_final);
+  //palloc_free_page(fn_final);
   palloc_free_page(fn_copy);
   
 done:
@@ -524,52 +540,100 @@ static bool setup_stack (void **esp, int argc, char *args[])
         *esp = PHYS_BASE;
       }else{
         palloc_free_page (kpage);
+	return false;
       }
     }
 
+    uint8_t *stack_bottom = (uint8_t *) PHYS_BASE - PGSIZE;
+    uint8_t *temp_esp = *esp;
+    
     uint32_t * arg_ptrs[argc];
 
     //add arguments to stack
     for (int i = argc-1; i >= 0; i--){
-      *esp = (char *)*esp - sizeof(char)*(strlen(args[i]) + 1);
-      memcpy(*esp, args[i], sizeof(char)*(strlen(args[i]) + 1));
-      arg_ptrs[i] = *esp;
+      temp_esp = temp_esp - sizeof(char)*(strlen(args[i]) + 1);
+
+      if (temp_esp < stack_bottom){
+	palloc_free_page(kpage);
+	return false;
+      }
+      
+      memcpy(temp_esp, args[i], sizeof(char)*(strlen(args[i]) + 1));
+      arg_ptrs[i] = (uint32_t *)temp_esp;
     }
 
     // Align to 4 bytes
-    while((int)*esp%4 != 0){
-      *esp = (char *)*esp - sizeof(char);
+    while((uintptr_t)temp_esp%4 != 0){
+      temp_esp -= sizeof(char);
+
+      if (temp_esp < stack_bottom){
+	palloc_free_page(kpage);
+	return false;
+      }
+      
       char x = 0;
-      memcpy(*esp, &x, sizeof(char));
+      memcpy(temp_esp, &x, sizeof(char));
     }
     
 
     // Add null pointer
     int null = 0;
-    *esp = (char *)*esp - sizeof(int);
-    memcpy(*esp, &null, sizeof(int));
+    temp_esp -= sizeof(int);
+
+    if (temp_esp < stack_bottom){
+      palloc_free_page(kpage);
+      return false;
+    }
+    
+    memcpy(temp_esp, &null, sizeof(int));
     
    
     // Add argument addresses
     for (int i = argc -1; i >= 0; i--) {      
       //memcpy(*esp, &arg_ptrs[i], sizeof(char *));
-      *esp = (char *)*esp - sizeof(char *);
-      (*(uint32_t **)(*esp)) = arg_ptrs[i];
+      temp_esp -= sizeof(char *);
+
+      if (temp_esp < stack_bottom){
+	palloc_free_page(kpage);
+	return false;
+      }
+      
+      (*(uint32_t *)temp_esp) = (uint32_t)arg_ptrs[i];
     }
     
 
     // Add args
-    char **args_ptr = (char **)*esp;
-    *esp = (char *)*esp - sizeof(char *);
-    memcpy(*esp, &args_ptr, sizeof(char *));
+    uint32_t *args_ptr = (uint32_t*)temp_esp;
+    temp_esp -= sizeof(uint32_t);
+
+    if (temp_esp < stack_bottom){
+      palloc_free_page(kpage);
+      return false;
+    }
+    
+    memcpy(temp_esp, &args_ptr, sizeof(uint32_t));
 	
     // Add argc
-    *esp = (char *)*esp - sizeof(int);
-    memcpy(*esp, &argc, sizeof(int));
+    temp_esp -= sizeof(uint32_t);
+
+    if (temp_esp < stack_bottom){
+      palloc_free_page(kpage);
+      return false;
+    }
+    
+    memcpy(temp_esp, &argc, sizeof(uint32_t));
 	
     // Add empty return addr
-    *esp = (char *)*esp - sizeof(int);
-    memcpy(*esp, &null, sizeof(int));
+    temp_esp -= sizeof(uint32_t);
+
+    if (temp_esp < stack_bottom){
+      palloc_free_page(kpage);
+      return false;
+    }
+    
+    memcpy(temp_esp, &null, sizeof(uint32_t));
+
+    *esp = temp_esp;
     
     return success;
 }

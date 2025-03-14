@@ -8,6 +8,7 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "userprog/syscall.h"
+#include <threads/synch.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -107,6 +108,9 @@ struct thread
   struct semaphore child_sema;    //semaphore to for parent to wait on
   struct thread *parent;          //pointer to parent thread
   struct child *my_child_struct;  //child struct to store in parents children list
+
+  bool child_success;
+  struct semaphore child_loaded;
   
 #ifdef USERPROG
   /* Owned by userprog/process.c. */
